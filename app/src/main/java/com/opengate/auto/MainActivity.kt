@@ -25,7 +25,7 @@ class MainActivity : AppCompatActivity() {
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
 
         val empty = TextView(this).apply {
-            text = "אין שערים עדיין.\nלחץ על \"הוסף שער\"."
+            text = "אין שערים עדיין.\n\nלחץ על \"התחברות וטעינת שערים\",\nהתחבר, ואז \"טען שערים מהשרת\"."
             gravity = Gravity.CENTER
             setPadding(pad, pad * 3, pad, pad)
         }
@@ -41,13 +41,15 @@ class MainActivity : AppCompatActivity() {
                 true
             }
         }
-        val add = Button(this).apply { text = "הוסף שער"; setOnClickListener { editGate(-1) } }
+        val settingsBtn = Button(this).apply { text = "התחברות וטעינת שערים"; setOnClickListener { settingsDialog() } }
+        val add = Button(this).apply { text = "הוסף שער ידנית"; setOnClickListener { editGate(-1) } }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(empty, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(settingsBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(add, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         list.emptyView = empty
