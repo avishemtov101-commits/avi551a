@@ -165,4 +165,65 @@ object GateStore {
         }
         return null
     }
+
+    // ---- טעינת רשימת השערים מהשרת ----
+
+    /** מביא את השערים של המשתמש. onResult על ה-main thread. */
+    fun fetchGates(ctx: Context, onResult: (Boolean, List<Gate>?, String) -> Unit) {
+        val tok = token(ctx)
+        if (tok.isEmpty()) { onResult(false, null, "חסר Token - התחבר קודם"); return }
+        val url = baseUrl(ctx).trimEnd('/') + "/gate/getGates"
+        val req = Request.Builder().url(url).get()
+            .header("Authorization", "Bearer $tok")
+            .header("x-access-token", tok)
+            .header("token", tok)
+            .build()
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { main.post { onResult(false, null, "אין תגובה מהשרת") } }
+            override fun onResponse(call: Call, response: Response) {
+                val txt = response.body?.string() ?: ""
+                val okHttp = response.isSuccessful; val sc = response.code; response.close()
+                val gates = parseGates(txt)
+                main.post {
+                    when {
+                        gates != null && gates.isNotEmpty() -> onResult(true, gates, "נטענו ${gates.size} שערים")
+                        gates != null -> onResult(false, null, "לא נמצאו שערים בחשבון")
+                        okHttp -> onResult(false, null, "מבנה תשובה לא מזוהה: ${txt.take(200)}")
+                        else -> onResult(false, null, "שגיאה $sc: ${txt.take(200)}")
+                    }
+                }
+            }
+        })
+    }
+
+    /** מנתח את תשובת getGates בגמישות: מערך בשורש או תחת gates/data/result/items. */
+    private fun parseGates(txt: String): List<Gate>? {
+        val arr: JSONArray = try {
+            JSONArray(txt)
+        } catch (e: Exception) {
+            try {
+                val o = JSONObject(txt)
+                findArray(o) ?: findArray(o.optJSONObject("data")) ?: return null
+            } catch (e2: Exception) { return null }
+        }
+        val out = ArrayList<Gate>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = firstNonEmpty(o, "gateId", "_id", "id", "gateID") ?: continue
+            val name = firstNonEmpty(o, "nickname", "gateName", "name", "title") ?: id
+            out.add(Gate(name, "api:$id"))
+        }
+        return out
+    }
+    private fun findArray(o: JSONObject?): JSONArray? {
+        if (o == null) return null
+        for (k in listOf("gates", "data", "result", "items", "list")) {
+            val a = o.optJSONArray(k); if (a != null) return a
+        }
+        return null
+    }
+    private fun firstNonEmpty(o: JSONObject, vararg keys: String): String? {
+        for (k in keys) { val v = o.optString(k, ""); if (v.isNotEmpty() && v != "null") return v }
+        return null
+    }
 }

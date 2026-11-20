@@ -127,12 +127,27 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        val loadBtn = Button(this).apply {
+            text = "טען שערים מהשרת"
+            setOnClickListener {
+                GateStore.setBaseUrl(this@MainActivity, base.text.toString())
+                GateStore.setToken(this@MainActivity, token.text.toString())
+                GateStore.fetchGates(this@MainActivity) { ok, fetched, m ->
+                    toast(m)
+                    if (ok && fetched != null) {
+                        val existing = gates.map { it.target }.toMutableSet()
+                        fetched.forEach { if (it.target !in existing) { gates.add(it); existing.add(it.target) } }
+                        persist()
+                    }
+                }
+            }
+        }
         fun lbl(t: String) = TextView(this).apply { text = t; setPadding(0, pad / 2, 0, 0) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
             addView(lbl("שרת:")); addView(base)
             addView(lbl("התחברות ב-SMS:")); addView(phone); addView(sendBtn); addView(code); addView(verifyBtn)
-            addView(lbl("או Token ידני:")); addView(token)
+            addView(lbl("או Token ידני:")); addView(token); addView(loadBtn)
         }
         val scroll = ScrollView(this).apply { addView(box) }
         AlertDialog.Builder(this)
