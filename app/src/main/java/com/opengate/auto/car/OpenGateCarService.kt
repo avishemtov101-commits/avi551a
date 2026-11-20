@@ -46,7 +46,7 @@ class GatesScreen(carContext: CarContext) : Screen(carContext) {
             items.addItem(
                 Row.Builder()
                     .setTitle(gate.name)
-                    .addText(if (gate.isHttp) "פתיחה ברשת" else gate.target)
+                    .addText(when { gate.isApi -> "OpenGate"; gate.isHttp -> "רשת"; else -> gate.target })
                     .setOnClickListener {
                         GateStore.open(carContext, gate) { msg ->
                             CarToast.makeText(carContext, msg, CarToast.LENGTH_SHORT).show()
