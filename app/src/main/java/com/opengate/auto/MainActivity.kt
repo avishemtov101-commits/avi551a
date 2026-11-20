@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity() {
         list.emptyView = empty
         setContentView(root)
 
+        title = "OpenGate Auto 1.3"
         gates.addAll(GateStore.load(this)); refresh()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED)
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CALL_PHONE), 1)
