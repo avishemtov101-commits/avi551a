@@ -161,11 +161,11 @@ object GateStore {
 
     // ---- טעינת רשימת השערים ----
 
-    /** GET /gate/getGates?uqid=... */
+    /** GET /gates?uqid=... */
     fun fetchGates(ctx: Context, onResult: (Boolean, List<Gate>?, String) -> Unit) {
         val id = uqid(ctx)
         if (id.isEmpty()) { onResult(false, null, "לא מחובר - התחבר קודם"); return }
-        val url = baseUrl(ctx).trimEnd('/') + "/gate/getGates?uqid=${Uri.encode(id)}"
+        val url = baseUrl(ctx).trimEnd('/') + "/gates?uqid=${Uri.encode(id)}"
         val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { main.post { onResult(false, null, "אין תגובה מהשרת") } }
