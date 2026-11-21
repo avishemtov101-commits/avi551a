@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,9 +20,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * שער. target קובע את שיטת הפתיחה:
- *   מתחיל ב-"api:"   -> פתיחה דרך OpenGate API (callNow). מה שאחרי "api:" הוא gateId.
- *   מתחיל ב-"http"   -> קריאת GET ישירה לכתובת (ממסר חכם וכו').
- *   אחרת             -> מספר טלפון לחיוג.
+ *   מתחיל ב-"api:"  -> פתיחה דרך OpenGate (callNow). מה שאחרי "api:" הוא gateId.
+ *   מתחיל ב-"http"  -> GET ישיר לכתובת.
+ *   אחרת            -> מספר טלפון לחיוג.
  */
 data class Gate(val name: String, val target: String) {
     val isApi: Boolean get() = target.startsWith("api:", true)
@@ -32,32 +33,29 @@ data class Gate(val name: String, val target: String) {
 object GateStore {
     private const val PREFS = "gates"
     private const val KEY_LIST = "list"
-    private const val KEY_TOKEN = "token"
+    private const val KEY_UQID = "token"   // uqid - מזהה ההתחברות של OpenGate
     private const val KEY_BASE = "baseUrl"
     const val DEFAULT_BASE = "https://api.opengate.io"
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
     private val main = Handler(Looper.getMainLooper())
     private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .build()
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun baseUrl(ctx: Context): String = prefs(ctx).getString(KEY_BASE, DEFAULT_BASE) ?: DEFAULT_BASE
     fun setBaseUrl(ctx: Context, v: String) = prefs(ctx).edit().putString(KEY_BASE, v.trim().ifEmpty { DEFAULT_BASE }).apply()
-    fun token(ctx: Context): String = prefs(ctx).getString(KEY_TOKEN, "") ?: ""
-    fun setToken(ctx: Context, v: String) = prefs(ctx).edit().putString(KEY_TOKEN, v.trim()).apply()
+    fun uqid(ctx: Context): String = prefs(ctx).getString(KEY_UQID, "") ?: ""
+    fun setUqid(ctx: Context, v: String) = prefs(ctx).edit().putString(KEY_UQID, v.trim()).apply()
 
     fun load(ctx: Context): List<Gate> {
         val raw = prefs(ctx).getString(KEY_LIST, "[]") ?: "[]"
         return try {
             val arr = JSONArray(raw)
-            List(arr.length()) { i ->
-                val o = arr.getJSONObject(i)
-                Gate(o.getString("name"), o.getString("target"))
-            }
+            List(arr.length()) { i -> val o = arr.getJSONObject(i); Gate(o.getString("name"), o.getString("target")) }
         } catch (e: Exception) { emptyList() }
     }
 
@@ -67,7 +65,6 @@ object GateStore {
         prefs(ctx).edit().putString(KEY_LIST, arr.toString()).apply()
     }
 
-    /** פותח שער. onResult נקרא תמיד על ה-main thread עם הודעה קצרה. */
     fun open(ctx: Context, gate: Gate, onResult: (String) -> Unit) {
         when {
             gate.isApi  -> openApi(ctx, gate, onResult)
@@ -77,18 +74,13 @@ object GateStore {
     }
 
     private fun openApi(ctx: Context, gate: Gate, onResult: (String) -> Unit) {
-        val tok = token(ctx)
-        if (tok.isEmpty()) { onResult("חסר Token - פתח הגדרות והתחבר"); return }
+        val id = uqid(ctx)
+        if (id.isEmpty()) { onResult("לא מחובר - פתח הגדרות והתחבר"); return }
+        // כמו האפליקציה המקורית: GET עם uqid כפרמטר, ואין כותרת אימות.
         val url = baseUrl(ctx).trimEnd('/') +
-            "/gates/callNow?gateId=${Uri.encode(gate.gateId)}" +
-            "&type=manualCall&userLocation=&comeFrom=app&isApp=true"
-        // ה-Token נשלח בכמה כותרות נפוצות כדי להתאים לשרת בלי לנחש אחת בלבד.
-        val req = Request.Builder().url(url).get()
-            .header("Authorization", "Bearer $tok")
-            .header("x-access-token", tok)
-            .header("token", tok)
-            .build()
-        enqueue(req, gate.name, onResult)
+            "/gates/callNow?uqid=${Uri.encode(id)}&gateId=${Uri.encode(gate.gateId)}" +
+            "&type=manualCall&userLocation="
+        enqueue(Request.Builder().url(url).get().header("Accept", "application/json").build(), gate.name, onResult)
     }
 
     private fun openRawHttp(url: String, name: String, onResult: (String) -> Unit) {
@@ -118,71 +110,67 @@ object GateStore {
         } catch (e: Exception) { onResult("החיוג נכשל") }
     }
 
-    // ---- התחברות SMS לקבלת Token ----
+    // ---- התחברות SMS (בדיוק כמו האפליקציה המקורית) ----
 
-    fun sendSmsCode(ctx: Context, phone: String, onResult: (Boolean, String) -> Unit) {
-        val body = JSONObject().put("phoneNumber", phone).toString().toRequestBody(JSON)
+    /** POST /sms/generateSmsCode  body {ext, phone} */
+    fun sendSmsCode(ctx: Context, ext: String, phone: String, onResult: (Boolean, String) -> Unit) {
+        val body = JSONObject().put("ext", ext).put("phone", phone).toString().toRequestBody(JSON)
         val req = Request.Builder().url(baseUrl(ctx).trimEnd('/') + "/sms/generateSmsCode").post(body).build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { main.post { onResult(false, "אין תגובה מהשרת") } }
             override fun onResponse(call: Call, response: Response) {
-                val ok = response.isSuccessful; val code = response.code; response.close()
-                main.post { onResult(ok, if (ok) "נשלח קוד ב-SMS" else "השרת החזיר שגיאה $code") }
+                val ok = response.isSuccessful; val sc = response.code; val txt = response.body?.string() ?: ""; response.close()
+                main.post { onResult(ok, if (ok) "נשלח קוד ב-SMS" else "שגיאה $sc: ${txt.take(160)}") }
             }
         })
     }
 
-    /** מאמת קוד ומחזיר (success, token-או-הודעת-שגיאה). את ה-Token שומר אוטומטית. */
-    fun verifySmsCode(ctx: Context, phone: String, code: String, onResult: (Boolean, String) -> Unit) {
-        val body = JSONObject().put("phoneNumber", phone).put("code", code).toString().toRequestBody(JSON)
+    /** POST /sms/verifySmsCode  body {ext, phone, smsCode, platform, deviceVersion, deviceType} -> uqid */
+    fun verifySmsCode(ctx: Context, ext: String, phone: String, smsCode: String, onResult: (Boolean, String) -> Unit) {
+        val body = JSONObject()
+            .put("ext", ext).put("phone", phone).put("smsCode", smsCode)
+            .put("platform", "android").put("deviceType", "android")
+            .put("deviceVersion", Build.VERSION.RELEASE ?: "")
+            .toString().toRequestBody(JSON)
         val req = Request.Builder().url(baseUrl(ctx).trimEnd('/') + "/sms/verifySmsCode").post(body).build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { main.post { onResult(false, "אין תגובה מהשרת") } }
             override fun onResponse(call: Call, response: Response) {
-                val txt = response.body?.string() ?: ""
-                val okHttp = response.isSuccessful; val sc = response.code; response.close()
-                val tok = extractToken(txt)
+                val txt = response.body?.string() ?: ""; val okHttp = response.isSuccessful; val sc = response.code; response.close()
+                val id = extractUqid(txt)
                 main.post {
-                    if (tok != null) { setToken(ctx, tok); onResult(true, "התחברת בהצלחה") }
-                    else onResult(false, if (okHttp) "לא נמצא Token בתשובה: ${txt.take(200)}"
-                                         else "שגיאה $sc: ${txt.take(200)}")
+                    if (id != null) { setUqid(ctx, id); onResult(true, "התחברת בהצלחה") }
+                    else onResult(false, if (okHttp) "לא נמצא מזהה בתשובה: ${txt.take(200)}" else "שגיאה $sc: ${txt.take(200)}")
                 }
             }
         })
     }
 
-    /** מחפש את ה-Token בשמות שדה נפוצים, כולל בתוך data/user. */
-    private fun extractToken(txt: String): String? {
+    private fun extractUqid(txt: String): String? {
         return try {
             val o = JSONObject(txt)
-            tokenFrom(o) ?: tokenFrom(o.optJSONObject("data")) ?: tokenFrom(o.optJSONObject("user"))
+            uqidFrom(o) ?: uqidFrom(o.optJSONObject("data")) ?: uqidFrom(o.optJSONObject("user"))
+                ?: uqidFrom(o.optJSONObject("userInfo"))
         } catch (e: Exception) { null }
     }
-    private fun tokenFrom(o: JSONObject?): String? {
+    private fun uqidFrom(o: JSONObject?): String? {
         if (o == null) return null
-        for (k in listOf("token", "accessToken", "access_token", "authToken", "jwt")) {
-            val v = o.optString(k, ""); if (v.isNotEmpty()) return v
-        }
+        for (k in listOf("uqid", "token", "accessToken")) { val v = o.optString(k, ""); if (v.isNotEmpty() && v != "null") return v }
         return null
     }
 
-    // ---- טעינת רשימת השערים מהשרת ----
+    // ---- טעינת רשימת השערים ----
 
-    /** מביא את השערים של המשתמש. onResult על ה-main thread. */
+    /** GET /gate/getGates?uqid=... */
     fun fetchGates(ctx: Context, onResult: (Boolean, List<Gate>?, String) -> Unit) {
-        val tok = token(ctx)
-        if (tok.isEmpty()) { onResult(false, null, "חסר Token - התחבר קודם"); return }
-        val url = baseUrl(ctx).trimEnd('/') + "/gate/getGates"
-        val req = Request.Builder().url(url).get()
-            .header("Authorization", "Bearer $tok")
-            .header("x-access-token", tok)
-            .header("token", tok)
-            .build()
+        val id = uqid(ctx)
+        if (id.isEmpty()) { onResult(false, null, "לא מחובר - התחבר קודם"); return }
+        val url = baseUrl(ctx).trimEnd('/') + "/gate/getGates?uqid=${Uri.encode(id)}"
+        val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { main.post { onResult(false, null, "אין תגובה מהשרת") } }
             override fun onResponse(call: Call, response: Response) {
-                val txt = response.body?.string() ?: ""
-                val okHttp = response.isSuccessful; val sc = response.code; response.close()
+                val txt = response.body?.string() ?: ""; val okHttp = response.isSuccessful; val sc = response.code; response.close()
                 val gates = parseGates(txt)
                 main.post {
                     when {
@@ -196,15 +184,11 @@ object GateStore {
         })
     }
 
-    /** מנתח את תשובת getGates בגמישות: מערך בשורש או תחת gates/data/result/items. */
     private fun parseGates(txt: String): List<Gate>? {
-        val arr: JSONArray = try {
-            JSONArray(txt)
-        } catch (e: Exception) {
-            try {
-                val o = JSONObject(txt)
-                findArray(o) ?: findArray(o.optJSONObject("data")) ?: return null
-            } catch (e2: Exception) { return null }
+        val arr: JSONArray = try { JSONArray(txt) }
+        catch (e: Exception) {
+            try { val o = JSONObject(txt); findArray(o) ?: findArray(o.optJSONObject("data")) ?: return null }
+            catch (e2: Exception) { return null }
         }
         val out = ArrayList<Gate>()
         for (i in 0 until arr.length()) {
@@ -217,9 +201,7 @@ object GateStore {
     }
     private fun findArray(o: JSONObject?): JSONArray? {
         if (o == null) return null
-        for (k in listOf("gates", "data", "result", "items", "list")) {
-            val a = o.optJSONArray(k); if (a != null) return a
-        }
+        for (k in listOf("gates", "data", "result", "items", "list")) { val a = o.optJSONArray(k); if (a != null) return a }
         return null
     }
     private fun firstNonEmpty(o: JSONObject, vararg keys: String): String? {

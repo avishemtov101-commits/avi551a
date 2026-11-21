@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         list.emptyView = empty
         setContentView(root)
 
-        title = "OpenGate Auto 1.3"
+        title = "OpenGate Auto 1.4"
         gates.addAll(GateStore.load(this)); refresh()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED)
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CALL_PHONE), 1)
@@ -106,27 +106,29 @@ class MainActivity : AppCompatActivity() {
     private fun settingsDialog() {
         val pad = (20 * resources.displayMetrics.density).toInt()
         val base = EditText(this).apply { setSingleLine(); setText(GateStore.baseUrl(this@MainActivity)); hint = "כתובת שרת" }
-        val token = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            setText(GateStore.token(this@MainActivity)); hint = "Token (הדבקה ידנית)"
-        }
-        val phone = EditText(this).apply { inputType = InputType.TYPE_CLASS_PHONE; hint = "מספר טלפון להתחברות" }
+        val ext = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText("972"); hint = "קידומת מדינה (972)" }
+        val phone = EditText(this).apply { inputType = InputType.TYPE_CLASS_PHONE; hint = "מספר טלפון (למשל 0501234567)" }
         val code = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; hint = "קוד מה-SMS" }
+        val uqid = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setText(GateStore.uqid(this@MainActivity)); hint = "מזהה התחברות (uqid) - אם יש לך כבר"
+        }
         val sendBtn = Button(this).apply {
             text = "שלח קוד SMS"
             setOnClickListener {
                 GateStore.setBaseUrl(this@MainActivity, base.text.toString())
-                val p = phone.text.toString().trim()
-                if (p.isEmpty()) toast("הזן מספר טלפון") else GateStore.sendSmsCode(this@MainActivity, p) { _, m -> toast(m) }
+                val p = phone.text.toString().trim(); val e = ext.text.toString().trim()
+                if (p.isEmpty()) toast("הזן מספר טלפון")
+                else GateStore.sendSmsCode(this@MainActivity, e, p) { _, m -> toast(m) }
             }
         }
         val verifyBtn = Button(this).apply {
             text = "אמת קוד והתחבר"
             setOnClickListener {
-                val p = phone.text.toString().trim(); val c = code.text.toString().trim()
+                val p = phone.text.toString().trim(); val c = code.text.toString().trim(); val e = ext.text.toString().trim()
                 if (p.isEmpty() || c.isEmpty()) { toast("הזן טלפון וקוד"); return@setOnClickListener }
-                GateStore.verifySmsCode(this@MainActivity, p, c) { ok, m ->
-                    toast(m); if (ok) token.setText(GateStore.token(this@MainActivity))
+                GateStore.verifySmsCode(this@MainActivity, e, p, c) { ok, m ->
+                    toast(m); if (ok) uqid.setText(GateStore.uqid(this@MainActivity))
                 }
             }
         }
@@ -134,7 +136,7 @@ class MainActivity : AppCompatActivity() {
             text = "טען שערים מהשרת"
             setOnClickListener {
                 GateStore.setBaseUrl(this@MainActivity, base.text.toString())
-                GateStore.setToken(this@MainActivity, token.text.toString())
+                GateStore.setUqid(this@MainActivity, uqid.text.toString())
                 GateStore.fetchGates(this@MainActivity) { ok, fetched, m ->
                     toast(m)
                     if (ok && fetched != null) {
@@ -149,8 +151,8 @@ class MainActivity : AppCompatActivity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
             addView(lbl("שרת:")); addView(base)
-            addView(lbl("התחברות ב-SMS:")); addView(phone); addView(sendBtn); addView(code); addView(verifyBtn)
-            addView(lbl("או Token ידני:")); addView(token); addView(loadBtn)
+            addView(lbl("התחברות ב-SMS:")); addView(ext); addView(phone); addView(sendBtn); addView(code); addView(verifyBtn)
+            addView(lbl("או מזהה ידני:")); addView(uqid); addView(loadBtn)
         }
         val scroll = ScrollView(this).apply { addView(box) }
         AlertDialog.Builder(this)
@@ -158,7 +160,7 @@ class MainActivity : AppCompatActivity() {
             .setView(scroll)
             .setPositiveButton("שמור") { _, _ ->
                 GateStore.setBaseUrl(this, base.text.toString())
-                GateStore.setToken(this, token.text.toString())
+                GateStore.setUqid(this, uqid.text.toString())
                 toast("נשמר")
             }
             .setNegativeButton("סגור", null).show()
